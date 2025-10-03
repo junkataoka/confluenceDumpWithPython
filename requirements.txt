@@ -3,3 +3,7 @@ Pillow
 pandoc
 pypandoc
 requests
+pycryptodomex
+browser_cookie3
+aiohttp
+
