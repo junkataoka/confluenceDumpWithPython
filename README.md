@@ -41,8 +41,6 @@ choco install pandoc
 **Export a single page with all children:**
 
 ```bash
-
-# OR using the refactored tool (cleaner code)
 python confluence_export.py \
   --mode single \
   --site confluence.example.com \
