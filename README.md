@@ -238,37 +238,6 @@ python confluence_export.py --site SITE --page ID --workers 10
 - **Browser session must be active** during export (don't logout mid-export)
 - **Rate limiting** may occur with too many workers (>20)
 
-## 🗺️ Roadmap
-
-- [x] SSO authentication support
-- [x] Hierarchical folder structure
-- [x] Concurrent processing (5-10x faster)
-- [x] Dynamic relative paths for nested pages
-- [ ] Generate index/TOC file
-- [ ] Resume interrupted exports
-- [ ] Progress bar for large exports
-
-## 📜 Version History
-
-- **2.0** (2025)
-  - ✨ Added SSO authentication support (Azure AD, Okta, SAML)
-  - 📁 Added hierarchical folder structure (parent → child → grandchild)
-  - ⚡ Added concurrent processing (5-10x faster)
-  - 🔧 Refactored codebase with better structure
-  - 🔗 Dynamic relative paths for nested pages
-  - 🖼️ Shared images folder (no duplication)
-- **1.4**
-  - Refactoring into simpler file setup
-- **1.3**
-  - Added Space export (flat folder structure)
-- **1.2**
-  - Better HTML header and footer
-  - Added page labels to HTML headers
-- **1.1**
-  - Added Page Properties dump
-- **1.0**
-  - Initial Release
-
 ## 👥 Authors
 
 **Original:** @dernorberto  
