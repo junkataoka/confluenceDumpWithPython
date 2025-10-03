@@ -41,23 +41,24 @@ choco install pandoc
 **Export a single page with all children:**
 
 ```bash
-python confluence_export.py \
-  --mode single \
-  --site confluence.example.com \
-  --page 796450310 \
-  --html
+python confluence_export.py --site confluence.example.com --page 796450310 --html
+```
+
+### Proxy Settings
+
+If you're behind a corporate proxy, set the `HTTP_PROXY` and `HTTPS_PROXY` environment variables:
+
+```bash
+export HTTP_PROXY=http://your-proxy:port
+export HTTPS_PROXY=http://your-proxy:port
 ```
 
 ## 📋 Command Line Options
 
 ```
 Required:
-  --mode, -m          Export mode: 'single' or 'space'
   --site, -S          Confluence site (e.g., confluence.example.com)
-
-Mode-specific:
-  --page, -p          Page ID (required for single mode)
-  --space, -s         Space key (required for space mode)
+  --page, -p          Page ID (required)
 
 Optional:
   --outdir, -o        Output directory (default: output)
@@ -98,71 +99,17 @@ output/796450310-Page_Title/
 - Paths automatically adjust: root uses `_images/`, children use `../_images/`, etc.
 - Each page gets its own folder (parent → child → grandchild hierarchy)
 
-## 🔧 Available Tools
-
-### Choose Your Tool
-
-Both tools work with SSO authentication. Pick based on your needs:
-
-#### `confluenceDumpWithSSO.py` - Production Version ⭐ **Recommended**
-
-**Best for:** Getting work done, all export modes
-
-✅ **Pros:**
-
-- Battle-tested and stable
-- Supports both **single** AND **space** modes
-- All features fully implemented
-- Production-ready
-
-**Use when:**
-
-- You need to export entire spaces
-- You want something that just works
-- You're exporting regularly
-
-#### `confluence_export.py` - Refactored Version
-
-**Best for:** Learning the codebase, contributing changes
-
-✅ **Pros:**
-
-- Clean class-based structure
-- Better error messages
-- Well-documented code
-- Easy to extend
-
-❌ **Cons:**
-
-- Only supports single mode currently
-
-**Use when:**
-
-- You want to understand/modify the code
-- Exporting single pages with children
-- You plan to contribute improvements
-
 ### Quick Command Reference
 
 ```bash
-# Single page (both tools work)
-python confluenceDumpWithSSO.py --mode single --site SITE --page ID --html
-python confluence_export.py --mode single --site SITE --page ID --html
-
-# Space export (only confluenceDumpWithSSO.py)
-python confluenceDumpWithSSO.py --mode space --site SITE --space KEY
+# Single page export
+python confluence_export.py --site SITE --page ID --html
 ```
 
 ### Supporting Files
 
 - **`myModules.py`** - Core export functions (used by both tools)
 - **`styles/confluence.css`** - Confluence CSS styling
-
-### Legacy (Old Authentication)
-
-- **`confluenceDumpWithPython.py`** - Old version without SSO support
-  - Requires API token authentication
-  - Use only if you have traditional API tokens and can't use SSO
 
 ## 🔍 Troubleshooting
 
@@ -171,7 +118,7 @@ python confluenceDumpWithSSO.py --mode space --site SITE --space KEY
 **Method 1: From URL**
 
 ```
-URL: https://confluence.example.com/pages/796450310/Page+Title
+URL: <https://confluence.example.com/pages/796450310/Page+Title>
 Page ID: 796450310
 ```
 
@@ -220,11 +167,11 @@ Page ID: 796450310
 
 ```
 output/796450310-Page/
-├── _images/           ← Images stored here
-│   └── diagram.png
-├── Page.html          ← Uses _images/diagram.png
+├── \_images/ ← Images stored here
+│ └── diagram.png
+├── Page.html ← Uses_images/diagram.png
 └── Child/
-    └── Child.html     ← Uses ../_images/diagram.png
+└── Child.html ← Uses ../\_images/diagram.png
 ```
 
 ### "Module not found" errors
@@ -247,129 +194,10 @@ choco install pandoc             # Windows
 
 ```bash
 # Increase concurrent workers (default: 5)
-python confluenceDumpWithSSO.py \
-  --mode single \
-  --site SITE \
-  --page ID \
-  --workers 10
-
-# For very large trees, use even more
---workers 20
+python confluence_export.py --site SITE --page ID --workers 10
 ```
 
 **⚠️ Note:** Too many workers (>20) may hit rate limits or cause connection issues.
-
-### SSL Certificate Errors (Corporate Proxy)
-
-**For corporate proxies/firewalls:**
-
-Add to the beginning of `confluenceDumpWithSSO.py`:
-
-```python
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-```
-
-## ⚡ Performance
-
-### Speed Comparison
-
-For a page tree with 50 pages:
-
-- **Sequential (old):** ~2-3 minutes
-- **Concurrent (new):** ~20-30 seconds
-- **Speed up:** **5-10x faster!** 🚀
-
-### How It Works
-
-1. **Page Tree Fetching:** 10 parallel connections
-2. **Page Export:** 5 parallel workers (adjustable with `--workers`)
-3. **Smart Concurrency:** Each level of children fetched in parallel
-
-**Example:** For a 3-level tree with 50 pages:
-
-- Old way: 50 sequential requests
-- New way: ~5-10 concurrent batches
-
-## 📚 Examples
-
-### Single Page Export
-
-```bash
-# Export page 796450310 and all its children with HTML
-python confluenceDumpWithSSO.py \
-  --mode single \
-  --site confluence.example.com \
-  --page 796450310 \
-  --html
-```
-
-### Export to Custom Directory
-
-```bash
-python confluenceDumpWithSSO.py \
-  --mode single \
-  --site confluence.example.com \
-  --page 796450310 \
-  --outdir my_docs
-```
-
-### Export with Sphinx Compatibility
-
-```bash
-# Puts _images and _static at root (Sphinx-style)
-python confluenceDumpWithSSO.py \
-  --mode single \
-  --site confluence.example.com \
-  --page 796450310 \
-  --sphinx \
-  --tags
-```
-
-### Export Entire Space
-
-```bash
-python confluenceDumpWithSSO.py \
-  --mode space \
-  --site confluence.example.com \
-  --space MYSPACE \
-  --html
-```
-
-### Speed Up Large Exports
-
-```bash
-# Use 10 concurrent workers (default is 5)
-python confluenceDumpWithSSO.py \
-  --mode single \
-  --site confluence.example.com \
-  --page 796450310 \
-  --workers 10
-```
-
-### Only RST (No HTML)
-
-```bash
-# Default behavior - only generates RST files
-python confluenceDumpWithSSO.py \
-  --mode single \
-  --site confluence.example.com \
-  --page 796450310
-```
-
-### Real-World Production Example
-
-```bash
-# Export documentation space with all options
-python confluenceDumpWithSSO.py \
-  --mode space \
-  --site confluence.tmc-stargate.com \
-  --space AIP \
-  --html \
-  --sphinx \
-  --workers 10 \
-  --outdir docs/confluence-export
-```
 
 ## 🔐 How SSO Authentication Works
 
@@ -416,9 +244,7 @@ python confluenceDumpWithSSO.py \
 - [x] Hierarchical folder structure
 - [x] Concurrent processing (5-10x faster)
 - [x] Dynamic relative paths for nested pages
-- [ ] Export by page label
 - [ ] Generate index/TOC file
-- [ ] Confluence Server/Data Center support
 - [ ] Resume interrupted exports
 - [ ] Progress bar for large exports
 
@@ -459,7 +285,3 @@ This project is licensed under the MIT License - see the LICENSE.txt file for de
   - Command you ran
   - Error message
   - Confluence version (Cloud/Server/DC)
-
----
-
-**⭐ Star this repo if it helped you!**

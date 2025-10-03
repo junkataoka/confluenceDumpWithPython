@@ -2,13 +2,11 @@ import json
 import os.path
 import re
 import shutil
-import sys
 
 import pypandoc
 import requests
 from bs4 import BeautifulSoup as bs
 from PIL import Image
-from requests.auth import HTTPBasicAuth
 
 """
 Arguments needed to run these functions centrally:
@@ -108,9 +106,6 @@ def set_variables():
     dict_vars["attach_dir"] = "_images/"
     dict_vars["emoticons_dir"] = "_images/"
     dict_vars["styles_dir"] = "_static/"
-    attach_dir = "_images/"
-    emoticons_dir = "_images/"
-    styles_dir = "_static/"
     return dict_vars
 
 
@@ -335,7 +330,6 @@ def dump_html(
     arg_type="",
     arg_html_output=False,
     arg_rst_output=True,
-    arg_show_labels=False,
 ):
     """Create HTML and RST files
 
@@ -360,10 +354,8 @@ def dump_html(
     my_vars = set_variables()
     my_emoticons_list = []
     my_outdir_content = arg_outdir_content
-    # my_outdir_content = os.path.join(arg_outdir_base,str(arg_page_id) + "-" + str(arg_title))      # this is for html and rst files
     if not os.path.exists(my_outdir_content):
         os.mkdir(my_outdir_content)
-    # myOutdir = os.path.join(arg_outdir,str(arg_page_id) + "-" + str(arg_title))
     my_outdirs = mk_outdirs(
         arg_outdir_base
     )  # this is for everything for _images and _static
@@ -404,12 +396,6 @@ def dump_html(
     my_attachments = get_attachments(
         arg_site, arg_page_id, str(my_outdirs[0]), arg_username, arg_api_token
     )
-    #
-    # used for pageprops mode
-    #
-    # if (arg_type == "child"):
-    # my_report_children_dict = get_page_properties_children(arg_site,arg_html,arg_outdir,arg_username,arg_api_token)[1]              # get list of all page properties children
-    # my_report_children_dict[arg_page_id].update({"Filename": arg_html_file_name})
     if arg_type == "report":
         my_report_children_dict = get_page_properties_children(
             arg_site, arg_html, my_outdir_content, arg_username, arg_api_token
@@ -628,16 +614,10 @@ def dump_html(
                 f"    :confluencePageParent: {arg_page_parent} \n"
                 f"\n"
             )
-        ## Footer with list of page labels
-        if arg_show_labels == True:
-            footer_rst = f"...." f"\n" f"\n**Page labels**: {arg_page_labels} \n"
-        else:
-            footer_rst = ""
 
         rst_file = open(rst_file_path, "w", encoding="utf-8")
         rst_file.write(rst_page_header)
         rst_file.write(output_rst)
-        rst_file.write(footer_rst)
         rst_file.close()
         print(f"Exported RST file: {rst_file_path}")
         if arg_html_output == False:
