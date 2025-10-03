@@ -1,6 +1,5 @@
 beautifulsoup4
 Pillow
-pandoc
 pypandoc
 requests
 browser_cookie3
