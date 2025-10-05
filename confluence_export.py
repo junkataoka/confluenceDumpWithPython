@@ -2,23 +2,15 @@
 """
 Confluence Export Tool with SSO Support
 
-A tool to export Confluence pages with Azure AD SSO authentication.
-Uses browser session cookies for authentication.
+Export Confluence pages using browser session cookies (SSO compatible).
+Supports Azure AD, Okta, SAML, and other SSO providers.
 
 Usage:
-    # Export a single page and its children
     python confluence_export.py --site confluence.example.com --page 123456 --html
 
 Requirements:
-    - Python 3.8+
-    - browser_cookie3
-    - requests
-    - beautifulsoup4
-    - pypandoc
-    - Pillow
+    Python 3.8+ with: browser_cookie3, requests, beautifulsoup4, pypandoc, Pillow
 
-Author: Modified for SSO support
-Date: 2025
 """
 
 import argparse
@@ -42,34 +34,34 @@ import myModules
 
 
 class ConfluenceExporter:
-    """Main exporter class for Confluence content"""
+    """Export Confluence pages with hierarchical structure and concurrent processing."""
 
     def __init__(self, site: str, session: requests.Session):
         self.site = site.replace("https://", "").replace("http://", "")
         self.session = session
-        self.user_name = ""  # Empty for session-based auth
-        self.api_token = session  # Pass session as token
+        self.user_name = ""  # Empty string for session-based auth
+        self.api_token = session  # Session object acts as auth token
 
     def get_page_tree(
         self, root_page_id: str, max_workers: int = 10
     ) -> List[Dict[str, Any]]:
         """
-        Recursively fetch all pages starting from root page
+        Recursively fetch page tree starting from root page.
 
         Args:
             root_page_id: ID of the root page
             max_workers: Number of concurrent workers for fetching
 
         Returns:
-            List of page dictionaries with metadata
+            List of page dictionaries with id, title, body, level, parent_id
         """
 
         def fetch_children(page_id: str, level: int = 0) -> List[Dict[str, Any]]:
-            """Recursively fetch page and its children"""
+            """Fetch page and all its children recursively."""
             pages = []
             indent = "  " * level
 
-            # Get page info
+            # Fetch page content
             page_body = myModules.get_body_export_view(
                 self.site, page_id, self.user_name, self.api_token
             ).json()
@@ -87,7 +79,7 @@ class ConfluenceExporter:
                 }
             )
 
-            # Get children
+            # Fetch child pages
             children_url = (
                 f"https://{self.site}/rest/api/content/{page_id}/child/page?limit=250"
             )
@@ -100,7 +92,7 @@ class ConfluenceExporter:
                 if child_pages:
                     print(f"{indent}│  ({len(child_pages)} children)")
 
-                    # Fetch all children concurrently
+                    # Process all children concurrently
                     with ThreadPoolExecutor(max_workers=max_workers) as executor:
                         futures = []
                         for child in child_pages:
@@ -110,10 +102,9 @@ class ConfluenceExporter:
                             )
                             futures.append((child_id, future))
 
-                        # Collect results
+                        # Collect results and set parent IDs
                         for child_id, future in futures:
                             child_pages_list = future.result()
-                            # Set parent IDs
                             for cp in child_pages_list:
                                 if cp["level"] == level + 1 and cp["parent_id"] is None:
                                     cp["parent_id"] = page_id
@@ -131,17 +122,18 @@ class ConfluenceExporter:
 
     def build_folder_structure(self, pages: List[Dict[str, Any]]) -> Dict[str, str]:
         """
-        Build hierarchical folder paths for pages
+        Build hierarchical folder paths for pages based on parent-child relationships.
 
         Args:
             pages: List of page dictionaries
 
         Returns:
-            Dictionary mapping page_id to folder path
+            Dictionary mapping page_id -> relative folder path
         """
         page_paths = {}
 
         def get_path(page_id: str) -> str:
+            """Recursively build path for a page."""
             if page_id in page_paths:
                 return page_paths[page_id]
 
@@ -151,6 +143,8 @@ class ConfluenceExporter:
                 return ""
 
             parent_path = get_path(page["parent_id"])
+
+            # Sanitize title for folder name
             clean_title = (
                 page["title"]
                 .replace("/", "-")
@@ -166,6 +160,7 @@ class ConfluenceExporter:
             )
             return page_paths[page_id]
 
+        # Build paths for all pages
         for page in pages:
             get_path(page["id"])
 
@@ -177,29 +172,29 @@ class ConfluenceExporter:
         page_paths: Dict[str, str],
         base_dir: str,
         sphinx: bool,
-        tags: bool,
         html_output: bool,
         rst_output: bool,
         max_workers: int = 5,
     ):
         """
-        Export all pages concurrently
+        Export all pages concurrently to HTML/RST with proper folder structure.
 
         Args:
             pages: List of page dictionaries
             page_paths: Mapping of page_id to folder path
             base_dir: Base output directory
             sphinx: Sphinx compatibility mode
-            tags: Add tags to RST
             html_output: Export HTML files
             rst_output: Export RST files
             max_workers: Number of concurrent workers
         """
 
         def export_single(page: Dict[str, Any], page_num: int):
-            """Export a single page"""
+            """Export a single page to HTML/RST."""
             page_body = page["body"]
             page_html = page_body["body"]["export_view"]["value"]
+
+            # Sanitize title for filename
             page_title = (
                 page_body["title"]
                 .replace("/", "-")
@@ -210,10 +205,12 @@ class ConfluenceExporter:
             )
             page_id = page["id"]
 
-            # Determine output folder
+            # Determine output folder based on hierarchy
             if page["level"] == 0:
+                # Root page goes in base directory
                 page_outdir = base_dir
             else:
+                # Child pages go in nested folders
                 parent_path = page_paths.get(page["parent_id"], "")
                 page_outdir = (
                     os.path.join(base_dir, parent_path) if parent_path else base_dir
@@ -222,7 +219,7 @@ class ConfluenceExporter:
 
             print(f"[{page_num}/{len(pages)}] {page['title']}")
 
-            # Get metadata
+            # Fetch page metadata
             page_labels = myModules.get_page_labels(
                 self.site, page_id, self.user_name, self.api_token
             )
@@ -230,7 +227,7 @@ class ConfluenceExporter:
                 self.site, page_id, self.user_name, self.api_token
             )
 
-            # Export
+            # Export to HTML/RST
             myModules.dump_html(
                 self.site,
                 page_html,
@@ -243,7 +240,6 @@ class ConfluenceExporter:
                 self.user_name,
                 self.api_token,
                 sphinx,
-                tags,
                 arg_html_output=html_output,
                 arg_rst_output=rst_output,
             )
@@ -251,12 +247,14 @@ class ConfluenceExporter:
         print("\nExporting pages...")
         start_time = time.time()
 
+        # Export all pages concurrently
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = []
             for idx, page in enumerate(pages, 1):
                 future = executor.submit(export_single, page, idx)
                 futures.append(future)
 
+            # Wait for all exports to complete
             for future in futures:
                 future.result()
 
@@ -266,7 +264,9 @@ class ConfluenceExporter:
 
 def get_browser_session(domain: str) -> requests.Session:
     """
-    Extract authenticated session from browser cookies
+    Extract authenticated session from browser cookies.
+
+    Tries Chrome, Firefox, Safari, and Edge in order.
 
     Args:
         domain: Confluence domain
@@ -275,7 +275,7 @@ def get_browser_session(domain: str) -> requests.Session:
         Authenticated requests.Session
 
     Raises:
-        Exception: If cookies cannot be loaded
+        Exception: If cookies cannot be loaded from any browser
     """
     session = requests.Session()
 
@@ -290,7 +290,7 @@ def get_browser_session(domain: str) -> requests.Session:
             session.cookies.update(cookies)
             print(f"✓ Loaded session from {browser_name}")
             return session
-        except:
+        except Exception:
             continue
 
     raise Exception(
@@ -299,23 +299,32 @@ def get_browser_session(domain: str) -> requests.Session:
 
 
 def test_authentication(session: requests.Session, domain: str) -> bool:
-    """Test if session is authenticated"""
+    """Test if session is authenticated.
+
+    Args:
+        session: Requests session with cookies
+        domain: Confluence domain
+
+    Returns:
+        True if authenticated, False otherwise
+    """
     test_url = f"https://{domain}/rest/api/space"
     try:
         response = session.get(test_url, timeout=10)
         return response.status_code == 200
-    except:
+    except Exception:
         return False
 
 
 def main():
+    """Main entry point for the Confluence export tool."""
     parser = argparse.ArgumentParser(
         description="Export Confluence pages with SSO authentication",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-        Examples:
-          # Export single page with children
-          %(prog)s --site confluence.example.com --page 123456 --html
+Examples:
+  # Export single page with children
+  %(prog)s --site confluence.example.com --page 123456 --html
         """,
     )
 
@@ -327,7 +336,6 @@ def main():
         help="Confluence site (e.g., confluence.example.com)",
     )
     parser.add_argument("--page", "-p", type=str, help="Page ID")
-
     parser.add_argument(
         "--outdir",
         "-o",
@@ -337,9 +345,6 @@ def main():
     )
     parser.add_argument(
         "--sphinx", "-x", action="store_true", help="Sphinx compatible folder structure"
-    )
-    parser.add_argument(
-        "--tags", action="store_true", help="Add labels as tags in RST files"
     )
     parser.add_argument(
         "--html", action="store_true", help="Include HTML files in export"
@@ -419,7 +424,6 @@ def main():
         page_paths,
         base_dir,
         args.sphinx,
-        args.tags,
         args.html,
         args.rst,
         max_workers=args.workers,
