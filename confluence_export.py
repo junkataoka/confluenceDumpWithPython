@@ -43,7 +43,7 @@ class ConfluenceExporter:
         self.api_token = session  # Session object acts as auth token
 
     def get_page_tree(
-        self, root_page_id: str, max_workers: int = 10
+        self, root_page_id: str, max_workers: int = 2
     ) -> List[Dict[str, Any]]:
         """
         Recursively fetch page tree starting from root page.
@@ -62,9 +62,26 @@ class ConfluenceExporter:
             indent = "  " * level
 
             # Fetch page content
-            page_body = myModules.get_body_export_view(
+            response = myModules.get_body_export_view(
                 self.site, page_id, self.user_name, self.api_token
-            ).json()
+            )
+            
+            # Check response status before parsing JSON
+            if response.status_code != 200:
+                print(f"{indent}✗ Failed to fetch page {page_id}: HTTP {response.status_code}")
+                print(f"{indent}  Response content (first 200 chars): {response.text[:200]}")
+                if response.status_code == 429:
+                    print(f"{indent}  Rate limited - reduce --workers or add delays")
+                return []
+            
+            try:
+                page_body = response.json()
+            except Exception as e:
+                print(f"{indent}✗ Invalid JSON response for page {page_id}: {e}")
+                print(f"{indent}  Status code: {response.status_code}")
+                print(f"{indent}  Content-Type: {response.headers.get('Content-Type', 'unknown')}")
+                print(f"{indent}  Response content (first 500 chars): {response.text[:500]}")
+                return []
 
             page_title = page_body["title"]
             print(f"{indent}├─ {page_title} (ID: {page_id})")
@@ -83,10 +100,25 @@ class ConfluenceExporter:
             children_url = (
                 f"https://{self.site}/rest/api/content/{page_id}/child/page?limit=250"
             )
-            children_response = self.session.get(children_url, timeout=30)
+            try:
+                # Use make_request for retry logic
+                children_response = myModules.make_request(
+                    children_url, self.user_name, self.api_token, timeout=30
+                )
+            except Exception as e:
+                print(f"{indent}✗ Network error fetching children for page {page_id}: {e}")
+                return pages
 
-            if children_response.status_code == 200:
-                children_data = children_response.json()
+            if children_response.status_code == 200 and children_response.content:
+                try:
+                    children_data = children_response.json()
+                except Exception as e:
+                    print(f"{indent}✗ Failed to parse children JSON for page {page_id}: {e}")
+                    print(f"{indent}  Status code: {children_response.status_code}")
+                    print(f"{indent}  Content-Type: {children_response.headers.get('Content-Type', 'unknown')}")
+                    print(f"{indent}  Response content (first 500 chars): {children_response.text[:500]}")
+                    return pages
+                
                 child_pages = children_data.get("results", [])
 
                 if child_pages:
@@ -109,6 +141,11 @@ class ConfluenceExporter:
                                 if cp["level"] == level + 1 and cp["parent_id"] is None:
                                     cp["parent_id"] = page_id
                             pages.extend(child_pages_list)
+            else:
+                if children_response.status_code != 200:
+                    print(f"{indent}✗ Failed to fetch children for page {page_id}: HTTP {children_response.status_code}")
+                    if children_response.status_code == 429:
+                        print(f"{indent}  Rate limited - reduce --workers or add delays")
 
             return pages
 
@@ -288,7 +325,11 @@ def get_browser_session(domain: str) -> requests.Session:
         try:
             cookies = browser_func(domain_name=domain)
             session.cookies.update(cookies)
-            print(f"✓ Loaded session from {browser_name}")
+            cookie_count = len([c for c in session.cookies if domain in c.domain])
+            print(f"✓ Loaded session from {browser_name} ({cookie_count} cookies for {domain})")
+            if cookie_count == 0:
+                print(f"  WARNING: No cookies found for domain {domain}")
+                continue
             return session
         except Exception:
             continue
@@ -310,9 +351,23 @@ def test_authentication(session: requests.Session, domain: str) -> bool:
     """
     test_url = f"https://{domain}/rest/api/space"
     try:
-        response = session.get(test_url, timeout=10)
-        return response.status_code == 200
-    except Exception:
+        # Use make_request for retry logic
+        response = myModules.make_request(test_url, "", session, timeout=10)
+        if response.status_code == 200:
+            # Also verify we get valid JSON, not an HTML login page
+            try:
+                response.json()
+                return True
+            except:
+                print(f"WARNING: Got HTTP 200 but invalid JSON - likely redirected to login page")
+                print(f"Response content (first 200 chars): {response.text[:200]}")
+                return False
+        else:
+            print(f"Authentication test failed: HTTP {response.status_code}")
+            print(f"Response content (first 200 chars): {response.text[:200]}")
+            return False
+    except Exception as e:
+        print(f"Authentication test error: {e}")
         return False
 
 
@@ -359,8 +414,8 @@ Examples:
     parser.add_argument(
         "--workers",
         type=int,
-        default=5,
-        help="Number of concurrent workers (default: 5)",
+        default=2,
+        help="Number of concurrent workers (default: 2, reduce if you hit rate limits)",
     )
 
     args = parser.parse_args()

@@ -46,19 +46,60 @@ def make_request(url, arg_username, arg_api_token, **kwargs):
     Returns:
         requests.Response object
     """
-    # Check if arg_api_token is actually a requests.Session object
-    if hasattr(arg_api_token, "get") and hasattr(arg_api_token, "cookies"):
-        return arg_api_token.get(url, **kwargs)
-
-    auth_headers = get_auth_headers(arg_username, arg_api_token)
-    if auth_headers:
-        if "headers" in kwargs:
-            kwargs["headers"].update(auth_headers)
-        else:
-            kwargs["headers"] = auth_headers
-        return requests.get(url, **kwargs)
-    else:
-        return requests.get(url, auth=(arg_username, arg_api_token), **kwargs)
+    import time
+    from random import uniform
+    
+    max_retries = 10
+    base_delay = 3.0  # Start with 3 second delay for rate limiting
+    
+    for attempt in range(max_retries):
+        try:
+            # Add delay on retries to avoid rate limiting
+            if attempt > 0:
+                delay = base_delay * (2 ** (attempt - 1))  # Exponential: 3s, 6s, 12s, 24s...
+                print(f"  Waiting {delay}s before retry {attempt + 1}/{max_retries}...")
+                time.sleep(delay)
+            else:
+                # Small jitter on first attempt to spread out concurrent requests
+                time.sleep(uniform(0.05, 0.15))
+            
+            # Check if arg_api_token is actually a requests.Session object
+            if hasattr(arg_api_token, "get") and hasattr(arg_api_token, "cookies"):
+                response = arg_api_token.get(url, **kwargs)
+            else:
+                auth_headers = get_auth_headers(arg_username, arg_api_token)
+                if auth_headers:
+                    if "headers" in kwargs:
+                        kwargs["headers"].update(auth_headers)
+                    else:
+                        kwargs["headers"] = auth_headers
+                    response = requests.get(url, **kwargs)
+                else:
+                    response = requests.get(url, auth=(arg_username, arg_api_token), **kwargs)
+            
+            # Check for rate limiting
+            if response.status_code == 429:
+                if attempt < max_retries - 1:
+                    print(f"  Rate limited (429). Will retry with exponential backoff...")
+                    continue
+                else:
+                    print(f"  Rate limited (429) after {max_retries} attempts")
+                    return response
+            
+            # Success - return response
+            return response
+            
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                print(f"  Request failed: {e}. Retrying in {delay}s...")
+                time.sleep(delay)
+            else:
+                print(f"  Request failed after {max_retries} attempts: {e}")
+                raise
+    
+    # Should never reach here, but just in case
+    raise Exception(f"Failed to complete request to {url} after {max_retries} attempts")
 
 
 def build_base_url(arg_site):
@@ -515,8 +556,22 @@ def dump_html(
         "img", class_="confluence-embedded-image confluence-external-resource"
     )
     my_embeds_externals_counter = 0
+    
+    # Build base URL for handling relative URLs
+    base_url = build_base_url(arg_site)
+    
     for embed_ext in my_embeds_externals:
-        orig_embed_external_path = embed_ext["src"]
+        orig_embed_ext_src = embed_ext["src"]
+        
+        # Handle relative URLs by prepending base URL - must be done BEFORE any operations
+        if orig_embed_ext_src.startswith("/"):
+            orig_embed_external_path = base_url + orig_embed_ext_src
+        elif not orig_embed_ext_src.startswith(("http://", "https://")):
+            # Relative path without leading slash
+            orig_embed_external_path = f"{base_url}/{orig_embed_ext_src}"
+        else:
+            orig_embed_external_path = orig_embed_ext_src
+        
         orig_embed_external_name = orig_embed_external_path.rsplit("/", 1)[-1].rsplit(
             "?"
         )[0]
@@ -539,31 +594,75 @@ def dump_html(
                 to_download = requests.get(
                     orig_embed_external_path, allow_redirects=True
                 )
+                # Check if download was successful
+                if to_download.status_code != 200 or len(to_download.content) == 0:
+                    print(f"WARNING: Failed to download external embed {my_embed_external_name}: HTTP {to_download.status_code}, size {len(to_download.content)}")
+                    continue
+                
+                # Check if response is HTML instead of an image
+                content_type = to_download.headers.get('Content-Type', '').lower()
+                if 'html' in content_type or to_download.content.startswith(b'<!DOCTYPE') or to_download.content.startswith(b'<html'):
+                    print(f"WARNING: Server returned HTML instead of external image for {my_embed_external_name}")
+                    print(f"  URL: {orig_embed_external_path}")
+                    print(f"  Content-Type: {content_type}")
+                    print(f"  Response preview: {to_download.text[:200]}")
+                    continue
+                
                 with open(my_embed_external_path, "wb") as f:
                     f.write(to_download.content)
-            img = Image.open(my_embed_external_path)
+            
+            # Skip PIL for SVG files (not supported by Pillow)
+            if my_embed_external_name.lower().endswith('.svg'):
+                img = None  # SVG doesn't need size detection
+                embed_ext["width"] = 600  # Default width for SVG
+            else:
+                try:
+                    img = Image.open(my_embed_external_path)
+                except Exception as img_error:
+                    # Can't identify image format - could be avatar, corrupted, or unsupported format
+                    print(f"WARNING: Can't identify external image format for {my_embed_external_name}: {img_error}")
+                    print(f"  File size: {os.path.getsize(my_embed_external_path) if os.path.exists(my_embed_external_path) else 'N/A'} bytes")
+                    img = None
+                    embed_ext["width"] = 600  # Default width
         except Exception as e:
             print(f"WARNING: Skipping external embed {my_embed_external_path}: {e}")
+            continue
         else:
-            if img is not None:
+            if img is not None:  # Raster image with dimensions
                 if img.width < 600:
                     embed_ext["width"] = img.width
                 else:
                     embed_ext["width"] = 600
                 img.close()
-                embed_ext["height"] = "auto"
-                embed_ext["onclick"] = (
-                    f'window.open("{my_embed_external_path_relative}")'
-                )
-                embed_ext["src"] = str(my_embed_external_path_relative)
-                embed_ext["data-image-src"] = str(my_embed_external_path_relative)
-                my_embeds_externals_counter = my_embeds_externals_counter + 1
+            
+            # Set attributes for both SVG and raster images
+            embed_ext["height"] = "auto"
+            embed_ext["onclick"] = (
+                f'window.open("{my_embed_external_path_relative}")'
+            )
+            embed_ext["src"] = str(my_embed_external_path_relative)
+            embed_ext["data-image-src"] = str(my_embed_external_path_relative)
+            my_embeds_externals_counter = my_embeds_externals_counter + 1
 
     # Process embedded images (attachments)
     my_embeds = soup.findAll("img", class_=re.compile("^confluence-embedded-image"))
     print(str(len(my_embeds)) + " embedded images.")
+    
+    # Build base URL for handling relative URLs
+    base_url = build_base_url(arg_site)
+    
     for embed in my_embeds:
-        orig_embed_path = embed["src"]
+        orig_embed_src = embed["src"]
+        
+        # Handle relative URLs by prepending base URL - must be done BEFORE any operations
+        if orig_embed_src.startswith("/"):
+            orig_embed_path = base_url + orig_embed_src
+        elif not orig_embed_src.startswith(("http://", "https://")):
+            # Relative path without leading slash
+            orig_embed_path = f"{base_url}/{orig_embed_src}"
+        else:
+            orig_embed_path = orig_embed_src
+        
         orig_embed_name = orig_embed_path.rsplit("/", 1)[-1].rsplit("?")[0]
 
         my_embed_name = remove_illegal_characters(
@@ -578,20 +677,63 @@ def dump_html(
                 to_download = make_request(
                     orig_embed_path, arg_username, arg_api_token, allow_redirects=True
                 )
+                # Check if download was successful
+                if to_download.status_code != 200 or len(to_download.content) == 0:
+                    print(f"WARNING: Failed to download embed {my_embed_name}: HTTP {to_download.status_code}, size {len(to_download.content)}")
+                    print(f"  URL: {orig_embed_path}")
+                    continue
+                
+                # Check if response is HTML instead of an image
+                content_type = to_download.headers.get('Content-Type', '').lower()
+                if 'html' in content_type or to_download.content.startswith(b'<!DOCTYPE') or to_download.content.startswith(b'<html'):
+                    print(f"WARNING: Server returned HTML instead of image for {my_embed_name}")
+                    print(f"  URL: {orig_embed_path}")
+                    print(f"  Content-Type: {content_type}")
+                    print(f"  Response preview: {to_download.text[:200]}")
+                    continue
+                
                 with open(my_embed_path, "wb") as f:
                     f.write(to_download.content)
-            img = Image.open(my_embed_path)
+                    
+                print(f"  Downloaded {my_embed_name}: {len(to_download.content)} bytes")
+            
+            # Skip PIL for SVG files (not supported by Pillow)
+            if my_embed_name.lower().endswith('.svg'):
+                img = None  # SVG doesn't need size detection
+                embed["width"] = 600  # Default width for SVG
+            else:
+                try:
+                    img = Image.open(my_embed_path)
+                except Exception as img_error:
+                    # Can't identify image format - could be avatar, corrupted, or unsupported format
+                    # Still set it up with default dimensions
+                    print(f"WARNING: Can't identify image format for {my_embed_name}: {img_error}")
+                    if os.path.exists(my_embed_path):
+                        file_size = os.path.getsize(my_embed_path)
+                        print(f"  File exists: {my_embed_path}")
+                        print(f"  File size: {file_size} bytes")
+                        # Read first few bytes to check file type
+                        with open(my_embed_path, 'rb') as f:
+                            header = f.read(20)
+                            print(f"  File header: {header[:8].hex() if len(header) >= 8 else 'too short'}")
+                    else:
+                        print(f"  File does NOT exist: {my_embed_path}")
+                    img = None
+                    embed["width"] = 600  # Default width
         except Exception as e:
             print(f"WARNING: Skipping embed {my_embed_path}: {e}")
+            continue
         else:
-            if img is not None:
+            if img is not None:  # Raster image with dimensions
                 if img.width < 600:
                     embed["width"] = img.width
                 else:
                     embed["width"] = 600
                 img.close()
-                embed["height"] = "auto"
-                embed["onclick"] = f'window.open("{my_embed_path_relative}")'
+            
+            # Set attributes for both SVG and raster images
+            embed["height"] = "auto"
+            embed["onclick"] = f'window.open("{my_embed_path_relative}")'
             embed["src"] = my_embed_path_relative
 
     # Process emoticons
@@ -610,7 +752,16 @@ def dump_html(
                 my_outdirs[1], remove_illegal_characters(my_emoticon_title)
             )
             if not os.path.exists(file_path):
-                emoticon_src = emoticon["src"]
+                orig_emoticon_src = emoticon["src"]
+                
+                # Handle relative URLs by prepending base URL - must be done BEFORE any operations
+                if orig_emoticon_src.startswith("/"):
+                    emoticon_src = base_url + orig_emoticon_src
+                elif not orig_emoticon_src.startswith(("http://", "https://")):
+                    emoticon_src = f"{base_url}/{orig_emoticon_src}"
+                else:
+                    emoticon_src = orig_emoticon_src
+                
                 try:
                     request_emoticons = make_request(
                         emoticon_src, arg_username, arg_api_token
@@ -675,9 +826,14 @@ def dump_html(
     rst_file_name = f"{html_file_name.replace('html','rst')}"
     rst_file_path = os.path.join(my_outdir_content, rst_file_name)
     try:
-        output_rst = pypandoc.convert_file(
-            str(html_file_path),
-            "rst",
+        # Read HTML content and convert to avoid Path issues
+        with open(html_file_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+        
+        # Use convert_text instead of convert_file to avoid Path issues
+        output_rst = pypandoc.convert_text(
+            html_content,
+            to="rst",
             format="html",
             extra_args=["--standalone", "--wrap=none", "--list-tables"],
         )
