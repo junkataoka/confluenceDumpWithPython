@@ -4,6 +4,7 @@ Debug script to test session-based authentication
 """
 
 import sys
+
 try:
     import browser_cookie3
     import requests
@@ -12,10 +13,11 @@ except ImportError as e:
     print("Install with: pip install browser-cookie3 requests")
     sys.exit(1)
 
+
 def get_confluence_session(domain):
     """Get authenticated session from browser cookies"""
     session = requests.Session()
-    
+
     # Try different browsers
     for browser_name, browser_func in [
         ("Chrome", browser_cookie3.chrome),
@@ -28,10 +30,11 @@ def get_confluence_session(domain):
             session.cookies.update(cookies)
             print(f"✓ Loaded cookies from {browser_name}")
             return session
-        except:
+        except Exception:
             continue
-    
+
     raise Exception("Could not load cookies")
+
 
 # Configuration
 domain = "confluence.tmc-stargate.com"
@@ -69,25 +72,27 @@ for endpoint in endpoints:
     try:
         response = session.get(url, timeout=10)
         print(f"  Status: {response.status_code}")
-        
+
         if response.status_code == 200:
             try:
                 data = response.json()
                 if "results" in data:
                     print(f"  ✓ SUCCESS - Found {len(data['results'])} spaces")
-                    if data['results']:
+                    if data["results"]:
                         print(f"  First space: {data['results'][0].get('key', 'N/A')}")
                 elif "size" in data:
-                    print(f"  ✓ SUCCESS - Response contains {data.get('size', 0)} items")
+                    print(
+                        f"  ✓ SUCCESS - Response contains {data.get('size', 0)} items"
+                    )
                 else:
                     print(f"  ✓ SUCCESS - Response keys: {list(data.keys())[:5]}")
-            except:
-                print(f"  ✓ SUCCESS - Non-JSON response")
+            except Exception:
+                print("  ✓ SUCCESS - Non-JSON response")
         elif response.status_code == 401:
-            print(f"  ✗ UNAUTHORIZED - Session not valid")
+            print("  ✗ UNAUTHORIZED - Session not valid")
             print(f"  Response: {response.text[:200]}")
         elif response.status_code == 403:
-            print(f"  ✗ FORBIDDEN - No permission")
+            print("  ✗ FORBIDDEN - No permission")
         else:
             print(f"  ✗ Error: {response.text[:200]}")
     except Exception as e:
@@ -98,6 +103,7 @@ print("=" * 70)
 print("Step 3: Checking if session object passes correctly...")
 print()
 
+
 # Simulate what myModules.make_request does
 def test_session_detection(api_token):
     """Test if we can detect session object"""
@@ -105,13 +111,14 @@ def test_session_detection(api_token):
     print(f"Has 'get': {hasattr(api_token, 'get')}")
     print(f"Has 'cookies': {hasattr(api_token, 'cookies')}")
     print(f"Has 'request': {hasattr(api_token, 'request')}")
-    
-    if hasattr(api_token, 'get') and hasattr(api_token, 'cookies'):
+
+    if hasattr(api_token, "get") and hasattr(api_token, "cookies"):
         print("✓ Detected as session object")
         return True
     else:
         print("✗ NOT detected as session object")
         return False
+
 
 test_session_detection(session)
 

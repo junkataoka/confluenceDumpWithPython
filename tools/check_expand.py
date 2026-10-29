@@ -4,24 +4,33 @@ Check if ancestors are expanded
 """
 
 import sys
+
 try:
+    import json
+
     import browser_cookie3
     import requests
-    import json
 except ImportError as e:
     print(f"ERROR: {e}")
     sys.exit(1)
 
+
 def get_confluence_session(domain):
     session = requests.Session()
-    for browser_func in [browser_cookie3.chrome, browser_cookie3.firefox, browser_cookie3.safari, browser_cookie3.edge]:
+    for browser_func in [
+        browser_cookie3.chrome,
+        browser_cookie3.firefox,
+        browser_cookie3.safari,
+        browser_cookie3.edge,
+    ]:
         try:
             cookies = browser_func(domain_name=domain)
             session.cookies.update(cookies)
             return session
-        except:
+        except Exception:
             continue
     raise Exception("Could not load cookies")
+
 
 domain = "confluence.tmc-stargate.com"
 session = get_confluence_session(domain)
@@ -48,7 +57,7 @@ if response.status_code == 200:
         else:
             print("✗ ancestors field NOT present")
             print(f"  _expandable has: {page.get('_expandable', {}).get('ancestors')}")
-        
+
         if "space" in page:
             print("✓ space field is present")
             print(f"  Value: {page['space']}")

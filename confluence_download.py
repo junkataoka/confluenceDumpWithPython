@@ -2,8 +2,7 @@
 
 import requests
 
-from confluence_api import (build_base_url, find_attachment_by_filename,
-                            make_request)
+from confluence_api import find_attachment_by_filename, make_request
 
 
 def download_with_fallback(
@@ -71,7 +70,7 @@ def download_with_fallback(
         return (False, None, "Not a Confluence attachment URL")
 
     # Strategy 2: Search on current page
-    print(f"  Trying API fallback on current page...")
+    print("  Trying API fallback on current page...")
     fallback_url = find_attachment_by_filename(
         arg_site, arg_page_id, filename, arg_username, arg_api_token
     )
@@ -88,9 +87,9 @@ def download_with_fallback(
                 response = requests.get(fallback_url, allow_redirects=True)
 
             if is_valid_download(response):
-                print(f"  ✓ Downloaded via API from current page")
+                print("  ✓ Downloaded via API from current page")
                 return (True, response, "Downloaded via API from current page")
-        except Exception as e:
+        except Exception:
             pass
 
     # Strategy 3: Extract page ID from URL and search there
@@ -132,7 +131,7 @@ def download_with_fallback(
                                 response,
                                 f"Downloaded via API from source page {url_page_id}",
                             )
-                    except Exception as e:
+                    except Exception:
                         pass
     except Exception:
         pass

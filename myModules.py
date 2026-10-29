@@ -1,8 +1,6 @@
-import json
 import os.path
 import re
 import shutil
-import sys
 
 import pypandoc
 import requests
@@ -10,10 +8,13 @@ from bs4 import BeautifulSoup as bs
 from PIL import Image
 
 # Import from refactored modules
-from confluence_api import (build_base_url, find_attachment_by_filename,
-                            get_body_export_view, get_editor_version,
-                            get_page_labels, get_page_name, get_page_parent,
-                            make_request)
+from confluence_api import (
+    absolute_url,
+    build_base_url,
+    get_body_export_view,
+    get_page_name,
+    make_request,
+)
 from confluence_download import download_with_fallback
 
 # Script directory for accessing bundled resources
@@ -68,15 +69,8 @@ def mk_outdirs(arg_outdir="output"):
     outdir_emoticons = outdir_list[1]
     outdir_styles = outdir_list[2]
 
-    # Create directories
-    if not os.path.exists(arg_outdir):
-        os.mkdir(arg_outdir)
-    if not os.path.exists(outdir_attach):
-        os.mkdir(outdir_attach)
-    if not os.path.exists(outdir_emoticons):
-        os.mkdir(outdir_emoticons)
-    if not os.path.exists(outdir_styles):
-        os.mkdir(outdir_styles)
+    for directory in (arg_outdir, outdir_attach, outdir_emoticons, outdir_styles):
+        os.makedirs(directory, exist_ok=True)
 
     # Copy default CSS if not present
     if not os.path.exists(outdir_styles + "/confluence.css"):
@@ -228,8 +222,7 @@ def dump_html(
     my_emoticons_list = []
     my_outdir_content = arg_outdir_content
 
-    if not os.path.exists(my_outdir_content):
-        os.mkdir(my_outdir_content)
+    os.makedirs(my_outdir_content, exist_ok=True)
 
     my_outdirs = mk_outdirs(arg_outdir_base)
 
@@ -279,20 +272,10 @@ def dump_html(
     )
     my_embeds_externals_counter = 0
 
-    # Build base URL for handling relative URLs
-    base_url = build_base_url(arg_site)
-
     for embed_ext in my_embeds_externals:
         orig_embed_ext_src = embed_ext["src"]
 
-        # Handle relative URLs by prepending base URL - must be done BEFORE any operations
-        if orig_embed_ext_src.startswith("/"):
-            orig_embed_external_path = base_url + orig_embed_ext_src
-        elif not orig_embed_ext_src.startswith(("http://", "https://")):
-            # Relative path without leading slash
-            orig_embed_external_path = f"{base_url}/{orig_embed_ext_src}"
-        else:
-            orig_embed_external_path = orig_embed_ext_src
+        orig_embed_external_path = absolute_url(arg_site, orig_embed_ext_src)
 
         orig_embed_external_name = orig_embed_external_path.rsplit("/", 1)[-1].rsplit(
             "?"
@@ -369,20 +352,10 @@ def dump_html(
     my_embeds = soup.findAll("img", class_=re.compile("^confluence-embedded-image"))
     print(str(len(my_embeds)) + " embedded images.")
 
-    # Build base URL for handling relative URLs
-    base_url = build_base_url(arg_site)
-
     for embed in my_embeds:
         orig_embed_src = embed["src"]
 
-        # Handle relative URLs by prepending base URL - must be done BEFORE any operations
-        if orig_embed_src.startswith("/"):
-            orig_embed_path = base_url + orig_embed_src
-        elif not orig_embed_src.startswith(("http://", "https://")):
-            # Relative path without leading slash
-            orig_embed_path = f"{base_url}/{orig_embed_src}"
-        else:
-            orig_embed_path = orig_embed_src
+        orig_embed_path = absolute_url(arg_site, orig_embed_src)
 
         orig_embed_name = orig_embed_path.rsplit("/", 1)[-1].rsplit("?")[0]
 
@@ -475,13 +448,7 @@ def dump_html(
             if not os.path.exists(file_path):
                 orig_emoticon_src = emoticon["src"]
 
-                # Handle relative URLs by prepending base URL - must be done BEFORE any operations
-                if orig_emoticon_src.startswith("/"):
-                    emoticon_src = base_url + orig_emoticon_src
-                elif not orig_emoticon_src.startswith(("http://", "https://")):
-                    emoticon_src = f"{base_url}/{orig_emoticon_src}"
-                else:
-                    emoticon_src = orig_emoticon_src
+                emoticon_src = absolute_url(arg_site, orig_emoticon_src)
 
                 try:
                     request_emoticons = make_request(
@@ -525,7 +492,7 @@ def dump_html(
     if len(my_attachments) > 0:
         my_pre_footer = "<h2>Attachments</h2><ol>"
         for attachment in my_attachments:
-            my_pre_footer += f'<li><a href="{os.path.join(attach_dir,attachment)}">{attachment}</a></li>'
+            my_pre_footer += f'<li><a href="{os.path.join(attach_dir, attachment)}">{attachment}</a></li>'
         my_pre_footer += "</ol></br>"
 
     # Write HTML file
@@ -544,7 +511,7 @@ def dump_html(
     if not arg_rst_output:
         return
 
-    rst_file_name = f"{html_file_name.replace('html','rst')}"
+    rst_file_name = f"{html_file_name.replace('html', 'rst')}"
     rst_file_path = os.path.join(my_outdir_content, rst_file_name)
     try:
         # Read HTML content and convert to avoid Path issues

@@ -1,256 +1,154 @@
 # Confluence Export Tool
 
-Export Confluence pages to HTML and RST format with **Azure AD SSO support**. Includes all images, attachments, and emoticons with proper hierarchical folder structure.
+Export a Confluence page and all of its children to HTML and/or RST (Sphinx compatible),
+including images, attachments, and emoticons, preserving the page hierarchy as folders.
 
-## 🎯 Key Features
+Works with **Atlassian Cloud** (`*.atlassian.net`) and **Server / Data Center**.
 
-- ✅ **SSO Authentication** - Uses browser session cookies (works with Azure AD, Okta, SAML, etc.)
-- ✅ **Hierarchical Export** - Preserves parent-child page relationships in folder structure
-- ✅ **Concurrent Processing** - Fast parallel downloads (5-10x faster than sequential)
-- ✅ **Multiple Formats** - Export to HTML and/or RST (Sphinx compatible)
-- ✅ **Complete Content** - Downloads all images, attachments, and emoticons
-- ✅ **Smart Paths** - Automatic relative paths for nested pages
+## Features
 
-## 🚀 Quick Start
+- **Cloud and Server/DC** – Cloud's `/wiki` context path is handled automatically
+- **Two auth modes** – API token (recommended for Cloud) or browser SSO cookies (Azure AD, Okta, SAML…)
+- **Hierarchical export** – parent → child → grandchild folders
+- **Concurrent processing** with retry/backoff on rate limiting (HTTP 429)
+- **Complete content** – images, attachments, emoticons, CSS
+- **Internal link fixing** – rewrite Confluence page links to relative file paths
 
-### Prerequisites
+## Setup
 
-1. **Python 3.8+**
-2. **Login to Confluence** in your browser (Chrome, Firefox, Safari, or Edge)
-3. **Install dependencies:**
-
-```bash
-pip install browser-cookie3 requests beautifulsoup4 pypandoc Pillow
-```
-
-4. **Install Pandoc** (for RST conversion):
+Requires Python 3.10+ and [Pandoc](https://pandoc.org/) (for RST output).
 
 ```bash
-# macOS
-brew install pandoc
+pip install -r requirements.txt
 
-# Ubuntu/Debian
-sudo apt-get install pandoc
-
-# Windows
-choco install pandoc
-```
-
-### Basic Usage
-
-**Export a single page with all children:**
-
-```bash
-python confluence_export.py --site confluence.example.com --page 796450310 --html
-```
-
-### Proxy Settings
-
-If you're behind a corporate proxy, set the `HTTP_PROXY` and `HTTPS_PROXY` environment variables:
-
-```bash
-export HTTP_PROXY=http://your-proxy:port
-export HTTPS_PROXY=http://your-proxy:port
-```
-
-## 📋 Command Line Options
-
-```
-Required:
-  --site, -S          Confluence site (e.g., confluence.example.com)
-  --page, -p          Page ID (required)
-
-Optional:
-  --outdir, -o        Output directory (default: output)
-  --sphinx, -x        Enable Sphinx compatibility mode
-  --tags              Add labels as tags in RST files
-  --html              Include HTML files in export
-  --no-rst            Disable RST file generation
-  --workers           Number of concurrent workers (default: 5)
-```
-
-## 📁 Output Structure
-
-For single page with children:
-
-```
-output/796450310-Page_Title/
-├── _images/                    # All images (shared)
-│   ├── image1.png
-│   └── image2.jpg
-├── _static/                    # CSS files (shared)
-│   └── confluence.css
-├── Page_Title.html             # Root page HTML
-├── Page_Title.rst              # Root page RST
-├── 123456-Child_Page/          # Child page folder
-│   ├── Child_Page.html
-│   ├── Child_Page.rst
-│   └── 789012-Grandchild/      # Grandchild folder
-│       ├── Grandchild.html
-│       └── Grandchild.rst
-└── 123457-Another_Child/
-    ├── Another_Child.html
-    └── Another_Child.rst
-```
-
-**Key Points:**
-
-- Images are shared in `_images/` at the root (not duplicated)
-- Paths automatically adjust: root uses `_images/`, children use `../_images/`, etc.
-- Each page gets its own folder (parent → child → grandchild hierarchy)
-
-### Quick Command Reference
-
-```bash
-# Single page export
-python confluence_export.py --site SITE --page ID --html
-```
-
-### Supporting Files
-
-- **`myModules.py`** - Core export functions (used by both tools)
-- **`styles/confluence.css`** - Confluence CSS styling
-
-## 🔍 Troubleshooting
-
-### How to Find Your Page ID
-
-**Method 1: From URL**
-
-```
-URL: <https://confluence.example.com/pages/796450310/Page+Title>
-Page ID: 796450310
-```
-
-**Method 2: Page Information**
-
-1. Go to the page in Confluence
-2. Click "..." menu → "Page Information"
-3. Look at the URL: `/pages/pageinfo.action?pageId=796450310`
-
-### "Could not load cookies"
-
-**Solution:**
-
-- ✅ Make sure you're logged into Confluence in your browser
-- ✅ Try opening a Confluence page first to ensure session is active
-- ✅ Try a different browser (Chrome, Firefox, Safari, Edge)
-- ✅ On macOS: Grant Terminal access to browser data
-
-**On macOS with Safari:**
-
-1. System Preferences → Security & Privacy → Privacy
-2. Select "Full Disk Access"
-3. Add Terminal (or your terminal app)
-4. Restart terminal
-
-### "Authentication failed"
-
-**Solution:**
-
-- ✅ Your browser session expired - login again in browser
-- ✅ Clear cookies and login fresh
-- ✅ Check that you can access Confluence pages in browser
-- ✅ Try: Open a Confluence page in browser, then **immediately** run the tool
-
-### Images not showing in HTML
-
-**Problem:** You open the HTML and images are broken
-
-**Solution:**
-
-- Images are in `_images/` folder at the root level
-- Open HTML files from their correct location (don't move them)
-- For nested pages, paths automatically use `../` or `../../`
-
-**Example structure:**
-
-```
-output/796450310-Page/
-├── \_images/ ← Images stored here
-│ └── diagram.png
-├── Page.html ← Uses_images/diagram.png
-└── Child/
-└── Child.html ← Uses ../\_images/diagram.png
-```
-
-### "Module not found" errors
-
-**Solution:**
-
-```bash
-# Install Python dependencies
-pip install browser-cookie3 requests beautifulsoup4 pypandoc Pillow
-
-# Install Pandoc (system package)
 brew install pandoc              # macOS
 sudo apt-get install pandoc      # Ubuntu/Debian
 choco install pandoc             # Windows
 ```
 
-### Export is Slow
+## Authentication
 
-**Solution: Use more workers**
+### Option 1: API token (Atlassian Cloud, or PAT on Server/DC)
 
 ```bash
-# Increase concurrent workers (default: 5)
-python confluence_export.py --site SITE --page ID --workers 10
+# Cloud: create a token at https://id.atlassian.com/manage-profile/security/api-tokens
+export CONFLUENCE_EMAIL=you@example.com
+export CONFLUENCE_API_TOKEN=your-api-token
+
+# Server/DC Personal Access Token: set only the token (sent as a Bearer token)
+export CONFLUENCE_API_TOKEN=your-pat
 ```
 
-**⚠️ Note:** Too many workers (>20) may hit rate limits or cause connection issues.
+If `CONFLUENCE_API_TOKEN` is set it is always used.
 
-## 🔐 How SSO Authentication Works
+### Option 2: Browser session cookies (SSO)
 
-1. **Login** to Confluence in your browser (Chrome, Firefox, Safari, or Edge)
-2. The tool **extracts session cookies** from your browser
-3. Uses those cookies to **authenticate API requests**
-4. **No need** for PAT tokens, API keys, or passwords!
+If no token is set, the tool reads your session cookies from a browser where you are
+logged into Confluence. Use `--browser chrome|edge|firefox|safari` to pick one
+(default `auto` tries all). On macOS, your terminal may need **Full Disk Access**
+(System Settings → Privacy & Security) and Keychain access to read browser cookies.
 
-**Supported SSO Providers:**
+## Usage
 
-- Azure AD (Microsoft)
-- Okta
-- SAML
-- Any SSO that works with browser cookies
+```bash
+# Atlassian Cloud (the site may also be any URL on the site)
+python confluence_export.py --site mysite.atlassian.net --page 123456 --html
 
-**Supported Browsers:**
+# Server / Data Center
+python confluence_export.py --site confluence.example.com --page 123456 --html
 
-- Chrome
-- Firefox
-- Safari
-- Edge
+# Export and rewrite internal links to local files
+python confluence_export.py --site mysite.atlassian.net --page 123456 --html --fix-links
+```
 
-## 🛠️ What It Does
+### Options
 
-- Leverages the **Confluence Cloud REST API (V1)**
-- Stores Confluence metadata (Page ID, Labels) in HTML headers and RST fields
-- Uses **BeautifulSoup** to parse and update HTML content
-- Downloads **all attachments**, emoticons, and embedded files
-- Converts HTML to RST using **Pandoc**
-- Creates **hierarchical folder structure** for page trees
-- Generates **dynamic relative paths** for images in nested pages
-- **Concurrent processing** for speed
+```
+Required:
+  --site, -S     Confluence site or any URL on it (mysite.atlassian.net, confluence.example.com)
+  --page, -p     Root page ID (exported with all descendants)
 
-## 📝 Known Issues
+Optional:
+  --outdir, -o   Output directory (default: output)
+  --sphinx, -x   Sphinx compatible folder structure
+  --html         Keep HTML files in the export
+  --no-rst       Disable RST file generation
+  --workers      Concurrent workers (default: 2; lower it if you hit rate limits)
+  --browser      Browser for SSO cookies: auto, chrome, edge, firefox, safari (default: auto)
+  --fix-links    Rewrite internal page links to relative paths (requires --html)
+```
 
-- **Long attachment filenames** may cause issues - rename in Confluence first
-- **Old emoticons** from Server migrations may not work - convert pages to New Editor
-- **Browser session must be active** during export (don't logout mid-export)
-- **Rate limiting** may occur with too many workers (>20)
+### Finding a page ID
 
-## 👥 Authors
+- Cloud: `https://mysite.atlassian.net/wiki/spaces/KEY/pages/123456/Title` → `123456`
+- Server/DC: `.../pages/viewpage.action?pageId=123456`, or **••• → Page Information**
 
-**Original:** @dernorberto  
-**SSO Support & v2.0:** Modified 2025
+## Output structure
 
-## 📄 License
+```
+output/123456-Page_Title/
+├── _images/                    # All images (shared, not duplicated)
+├── _static/                    # CSS
+├── Page_Title.html             # Root page
+├── Page_Title.rst
+├── Child_Page.html             # Children of the root page
+├── Child_Page.rst
+└── 234567-Child_Page/          # Children of Child_Page
+    ├── Grandchild.html         # Uses ../_images/...
+    └── Grandchild.rst
+```
 
-This project is licensed under the MIT License - see the LICENSE.txt file for details
+Each page is written to its parent's folder; a page's own children go in a
+`<id>-<title>/` subfolder next to it.
 
-## 📚 Additional Documentation
+Page ID, labels, and parent ID are stored in HTML `<meta>` tags and RST fields.
 
-- **`tools/`** - Helper scripts for testing and diagnostics
-- **Issues?** Open a GitHub issue with:
-  - Command you ran
-  - Error message
-  - Confluence version (Cloud/Server/DC)
+## Fixing internal links
+
+Links between exported pages still point at Confluence after export. Fix them either
+with `--fix-links` during export, or afterwards:
+
+```bash
+python fix_confluence_links.py --dry-run "output/123456-Page_Title"   # preview
+python fix_confluence_links.py "output/123456-Page_Title"             # apply
+```
+
+The fixer maps page IDs (from the HTML `<meta name="ConfluencePageID">` tags, so the
+export must include `--html`) to files and rewrites these link forms in HTML and RST:
+
+- `/spaces/KEY/pages/ID/...` and `/wiki/spaces/KEY/pages/ID/...`
+- absolute Cloud URLs, e.g. `https://mysite.atlassian.net/wiki/spaces/KEY/pages/ID`
+- `viewpage.action?pageId=ID`
+
+Links to pages outside the export are left unchanged and reported as missing.
+
+## Project layout
+
+| File | Purpose |
+|---|---|
+| `confluence_export.py` | CLI entry point: auth, page-tree fetch, concurrent export |
+| `confluence_api.py` | REST API helpers (URLs, retries, labels, attachments) |
+| `confluence_download.py` | File download with fallback strategies |
+| `myModules.py` | HTML processing, asset download, HTML/RST writing |
+| `fix_confluence_links.py` | Internal link rewriting (also used by `--fix-links`) |
+| `styles/` | CSS bundled into exports |
+| `tools/` | Ad-hoc diagnostic scripts for cookie/API debugging |
+| `tests/` | Unit tests: `python -m unittest discover -s tests` |
+
+## Troubleshooting
+
+- **Authentication failed / HTTP 401/403** – token wrong or expired; for cookies, open a
+  Confluence page in the browser first, then rerun.
+- **Could not load cookies** – log in, try another `--browser`, grant Full Disk Access, or
+  use an API token instead.
+- **HTTP 429** – lower `--workers`; requests are retried with exponential backoff.
+- **Images broken in HTML** – open files in place; paths are relative to `_images/`.
+- **Long attachment filenames / old Server emoticons** may fail to download.
+
+## Authors
+
+Original: @dernorberto. SSO and Cloud support: modified 2025–2026.
+
+## License
+
+MIT – see [LICENSE.txt](LICENSE.txt).

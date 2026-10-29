@@ -70,7 +70,7 @@ def make_request(url, arg_username, arg_api_token, **kwargs):
             if response.status_code == 429:
                 if attempt < max_retries - 1:
                     print(
-                        f"  Rate limited (429). Will retry with exponential backoff..."
+                        "  Rate limited (429). Will retry with exponential backoff..."
                     )
                     continue
                 else:
@@ -93,23 +93,60 @@ def make_request(url, arg_username, arg_api_token, **kwargs):
     raise Exception(f"Failed to complete request to {url} after {max_retries} attempts")
 
 
+def get_host(arg_site):
+    """Extract the host name from a site name or any Confluence URL.
+
+    Accepts e.g. "confluence.example.com", "mysite" (-> mysite.atlassian.net),
+    or "https://mysite.atlassian.net/wiki/spaces/KEY/overview".
+    """
+    site = arg_site.strip().replace("https://", "").replace("http://", "")
+    host = site.split("/", 1)[0]
+    if "." not in host:
+        host = f"{host}.atlassian.net"
+    return host
+
+
+def is_cloud(arg_site):
+    """Return True for Atlassian Cloud sites (*.atlassian.net)."""
+    return get_host(arg_site).endswith(".atlassian.net")
+
+
 def build_base_url(arg_site):
     """Build the base URL for Confluence API calls.
 
+    Atlassian Cloud serves Confluence under the "/wiki" context path.
+
     Args:
-        arg_site: Site name (subdomain for *.atlassian.net or full domain for custom)
+        arg_site: Site name (subdomain for *.atlassian.net, full domain, or URL)
 
     Returns:
-        Base URL for the Confluence instance
+        Base URL for the Confluence instance (no trailing slash)
     """
-    site = arg_site.replace("https://", "").replace("http://", "")
+    host = get_host(arg_site)
+    if is_cloud(arg_site):
+        return f"https://{host}/wiki"
+    # Keep a server context path (e.g. example.com/confluence) but drop page paths
+    site = arg_site.strip().replace("https://", "").replace("http://", "")
+    path = "/" + site.split("/", 1)[1] if "/" in site else ""
+    for marker in ("/display/", "/spaces/", "/pages/"):
+        path = path.split(marker, 1)[0]
+    return f"https://{host}{path.rstrip('/')}"
 
-    if "." in site and not site.endswith(".atlassian.net"):
-        return f"https://{site}"
-    elif ".atlassian.net" in site:
-        return f"https://{site}"
-    else:
-        return f"https://{site}.atlassian.net"
+
+def absolute_url(arg_site, src):
+    """Resolve a (possibly relative) URL found in page HTML to an absolute URL."""
+    if src.startswith(("http://", "https://")):
+        return src
+    if src.startswith("//"):
+        return f"https:{src}"
+    base_url = build_base_url(arg_site)
+    if src.startswith("/"):
+        host_url = f"https://{get_host(arg_site)}"
+        context = base_url[len(host_url) :]
+        if context and (src == context or src.startswith(context + "/")):
+            return host_url + src
+        return base_url + src
+    return f"{base_url}/{src}"
 
 
 def get_space_title(arg_site, arg_space_id, arg_username, arg_api_token):
@@ -265,9 +302,9 @@ def get_page_labels(arg_site, arg_page_id, arg_username, arg_api_token):
     server_url = f"{base_url}/rest/api/content/{arg_page_id}/label"
     response = make_request(server_url, arg_username, arg_api_token, timeout=30).json()
 
-    for l in response["results"]:
-        html_labels.append(l["name"])
-        print(f"Label: {l['name']}")
+    for label in response["results"]:
+        html_labels.append(label["name"])
+        print(f"Label: {label['name']}")
 
     html_labels = ", ".join(html_labels)
     print(f"Page labels: {html_labels}")
@@ -311,7 +348,9 @@ def find_attachment_by_filename(
     """
     try:
         base_url = build_base_url(arg_site)
-        server_url = f"{base_url}/rest/api/content/{arg_page_id}/child/attachment?limit=250"
+        server_url = (
+            f"{base_url}/rest/api/content/{arg_page_id}/child/attachment?limit=250"
+        )
         response = make_request(server_url, arg_username, arg_api_token, timeout=30)
 
         if response.status_code == 200:
@@ -325,11 +364,13 @@ def find_attachment_by_filename(
                         download_path = attachment["_links"].get("download")
                         if download_path:
                             return f"{base_url}{download_path}"
-                
+
                 # Check if there are more pages
                 if "next" in response_data.get("_links", {}):
                     next_url = f"{base_url}{response_data['_links']['next']}"
-                    response = make_request(next_url, arg_username, arg_api_token, timeout=30)
+                    response = make_request(
+                        next_url, arg_username, arg_api_token, timeout=30
+                    )
                     if response.status_code == 200:
                         response_data = response.json()
                         attachments = response_data.get("results", [])

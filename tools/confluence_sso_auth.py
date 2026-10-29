@@ -24,36 +24,36 @@ def get_confluence_session_cookies(domain):
         # Try Chrome first
         cookies = browser_cookie3.chrome(domain_name=domain)
         session.cookies.update(cookies)
-        print(f"✓ Loaded cookies from Chrome")
+        print("✓ Loaded cookies from Chrome")
         return session
-    except:
+    except Exception:
         pass
 
     try:
         # Try Firefox
         cookies = browser_cookie3.firefox(domain_name=domain)
         session.cookies.update(cookies)
-        print(f"✓ Loaded cookies from Firefox")
+        print("✓ Loaded cookies from Firefox")
         return session
-    except:
+    except Exception:
         pass
 
     try:
         # Try Safari
         cookies = browser_cookie3.safari(domain_name=domain)
         session.cookies.update(cookies)
-        print(f"✓ Loaded cookies from Safari")
+        print("✓ Loaded cookies from Safari")
         return session
-    except:
+    except Exception:
         pass
 
     try:
         # Try Edge
         cookies = browser_cookie3.edge(domain_name=domain)
         session.cookies.update(cookies)
-        print(f"✓ Loaded cookies from Edge")
+        print("✓ Loaded cookies from Edge")
         return session
-    except:
+    except Exception:
         pass
 
     raise Exception(
@@ -78,7 +78,7 @@ def test_session(session, base_url):
         try:
             response = session.get(test_url, timeout=10, allow_redirects=False)
             if response.status_code == 200:
-                print(f"✓ SUCCESS (HTTP 200)")
+                print("✓ SUCCESS (HTTP 200)")
                 print(f"\nCorrect API endpoint found: {endpoint}")
                 return True
             elif response.status_code == 302 or response.status_code == 301:
@@ -97,7 +97,7 @@ def test_session_old(session, base_url):
     try:
         response = session.get(f"{base_url}/wiki/rest/api/space", timeout=10)
         if response.status_code == 200:
-            print(f"✓ Authentication successful!")
+            print("✓ Authentication successful!")
             return True
         else:
             print(f"✗ Authentication failed: {response.status_code}")

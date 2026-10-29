@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Confluence Export Tool with SSO Support
+Confluence Export Tool
 
-Export Confluence pages using browser session cookies (SSO compatible).
-Supports Azure AD, Okta, SAML, and other SSO providers.
+Export a Confluence page tree (Cloud or Server/Data Center) to HTML/RST.
+Authenticates with an API token (CONFLUENCE_EMAIL + CONFLUENCE_API_TOKEN) or,
+if no token is set, with browser session cookies (SSO compatible).
 
 Usage:
     python confluence_export.py --site confluence.example.com --page 123456 --html
+    python confluence_export.py --site mysite.atlassian.net --page 123456 --html
 
 Requirements:
     Python 3.8+ with: browser_cookie3, requests, beautifulsoup4, pypandoc, Pillow
@@ -30,6 +32,7 @@ except ImportError as e:
     )
     sys.exit(1)
 
+import confluence_api
 import myModules
 
 
@@ -37,10 +40,47 @@ class ConfluenceExporter:
     """Export Confluence pages with hierarchical structure and concurrent processing."""
 
     def __init__(self, site: str, session: requests.Session):
-        self.site = site.replace("https://", "").replace("http://", "")
+        self.site = site
+        self.base_url = confluence_api.build_base_url(site)
         self.session = session
         self.user_name = ""  # Empty string for session-based auth
         self.api_token = session  # Session object acts as auth token
+
+    def _get_child_pages(self, page_id: str, indent: str = "") -> List[Dict[str, Any]]:
+        """Return all direct child pages of a page, following pagination."""
+        children: List[Dict[str, Any]] = []
+        url = f"{self.base_url}/rest/api/content/{page_id}/child/page?limit=100"
+        while url:
+            try:
+                response = confluence_api.make_request(
+                    url, self.user_name, self.api_token, timeout=30
+                )
+            except Exception as e:
+                print(
+                    f"{indent}✗ Network error fetching children for page {page_id}: {e}"
+                )
+                break
+            if response.status_code != 200:
+                print(
+                    f"{indent}✗ Failed to fetch children for page {page_id}: "
+                    f"HTTP {response.status_code}"
+                )
+                if response.status_code == 429:
+                    print(f"{indent}  Rate limited - reduce --workers")
+                break
+            try:
+                data = response.json()
+            except ValueError:
+                print(
+                    f"{indent}✗ Non-JSON children response for page {page_id} "
+                    f"({response.headers.get('Content-Type', 'unknown')}): "
+                    f"{response.text[:200]}"
+                )
+                break
+            children.extend(data.get("results", []))
+            next_link = data.get("_links", {}).get("next")
+            url = f"{self.base_url}{next_link}" if next_link else None
+        return children
 
     def get_page_tree(
         self, root_page_id: str, max_workers: int = 2
@@ -62,25 +102,33 @@ class ConfluenceExporter:
             indent = "  " * level
 
             # Fetch page content
-            response = myModules.get_body_export_view(
+            response = confluence_api.get_body_export_view(
                 self.site, page_id, self.user_name, self.api_token
             )
-            
+
             # Check response status before parsing JSON
             if response.status_code != 200:
-                print(f"{indent}✗ Failed to fetch page {page_id}: HTTP {response.status_code}")
-                print(f"{indent}  Response content (first 200 chars): {response.text[:200]}")
+                print(
+                    f"{indent}✗ Failed to fetch page {page_id}: HTTP {response.status_code}"
+                )
+                print(
+                    f"{indent}  Response content (first 200 chars): {response.text[:200]}"
+                )
                 if response.status_code == 429:
                     print(f"{indent}  Rate limited - reduce --workers or add delays")
                 return []
-            
+
             try:
                 page_body = response.json()
             except Exception as e:
                 print(f"{indent}✗ Invalid JSON response for page {page_id}: {e}")
                 print(f"{indent}  Status code: {response.status_code}")
-                print(f"{indent}  Content-Type: {response.headers.get('Content-Type', 'unknown')}")
-                print(f"{indent}  Response content (first 500 chars): {response.text[:500]}")
+                print(
+                    f"{indent}  Content-Type: {response.headers.get('Content-Type', 'unknown')}"
+                )
+                print(
+                    f"{indent}  Response content (first 500 chars): {response.text[:500]}"
+                )
                 return []
 
             page_title = page_body["title"]
@@ -96,56 +144,21 @@ class ConfluenceExporter:
                 }
             )
 
-            # Fetch child pages
-            children_url = (
-                f"https://{self.site}/rest/api/content/{page_id}/child/page?limit=250"
-            )
-            try:
-                # Use make_request for retry logic
-                children_response = myModules.make_request(
-                    children_url, self.user_name, self.api_token, timeout=30
-                )
-            except Exception as e:
-                print(f"{indent}✗ Network error fetching children for page {page_id}: {e}")
-                return pages
+            child_pages = self._get_child_pages(page_id, indent)
+            if child_pages:
+                print(f"{indent}│  ({len(child_pages)} children)")
 
-            if children_response.status_code == 200 and children_response.content:
-                try:
-                    children_data = children_response.json()
-                except Exception as e:
-                    print(f"{indent}✗ Failed to parse children JSON for page {page_id}: {e}")
-                    print(f"{indent}  Status code: {children_response.status_code}")
-                    print(f"{indent}  Content-Type: {children_response.headers.get('Content-Type', 'unknown')}")
-                    print(f"{indent}  Response content (first 500 chars): {children_response.text[:500]}")
-                    return pages
-                
-                child_pages = children_data.get("results", [])
-
-                if child_pages:
-                    print(f"{indent}│  ({len(child_pages)} children)")
-
-                    # Process all children concurrently
-                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                        futures = []
-                        for child in child_pages:
-                            child_id = child["id"]
-                            future = executor.submit(
-                                fetch_children, child_id, level + 1
-                            )
-                            futures.append((child_id, future))
-
-                        # Collect results and set parent IDs
-                        for child_id, future in futures:
-                            child_pages_list = future.result()
-                            for cp in child_pages_list:
-                                if cp["level"] == level + 1 and cp["parent_id"] is None:
-                                    cp["parent_id"] = page_id
-                            pages.extend(child_pages_list)
-            else:
-                if children_response.status_code != 200:
-                    print(f"{indent}✗ Failed to fetch children for page {page_id}: HTTP {children_response.status_code}")
-                    if children_response.status_code == 429:
-                        print(f"{indent}  Rate limited - reduce --workers or add delays")
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = [
+                        executor.submit(fetch_children, child["id"], level + 1)
+                        for child in child_pages
+                    ]
+                    for future in futures:
+                        child_pages_list = future.result()
+                        for cp in child_pages_list:
+                            if cp["level"] == level + 1 and cp["parent_id"] is None:
+                                cp["parent_id"] = page_id
+                        pages.extend(child_pages_list)
 
             return pages
 
@@ -257,10 +270,10 @@ class ConfluenceExporter:
             print(f"[{page_num}/{len(pages)}] {page['title']}")
 
             # Fetch page metadata
-            page_labels = myModules.get_page_labels(
+            page_labels = confluence_api.get_page_labels(
                 self.site, page_id, self.user_name, self.api_token
             )
-            page_parent = myModules.get_page_parent(
+            page_parent = confluence_api.get_page_parent(
                 self.site, page_id, self.user_name, self.api_token
             )
 
@@ -299,67 +312,91 @@ class ConfluenceExporter:
         print(f"\n✓ Exported {len(pages)} pages in {elapsed:.2f}s")
 
 
-def get_browser_session(domain: str) -> requests.Session:
+BROWSERS = {
+    "chrome": browser_cookie3.chrome,
+    "edge": browser_cookie3.edge,
+    "firefox": browser_cookie3.firefox,
+    "safari": browser_cookie3.safari,
+}
+
+
+def _cookie_matches(cookie_domain: str, host: str) -> bool:
+    cookie_domain = cookie_domain.lstrip(".")
+    return host == cookie_domain or host.endswith("." + cookie_domain)
+
+
+def get_browser_session(host: str, browser: str = "auto") -> requests.Session:
     """
     Extract authenticated session from browser cookies.
 
-    Tries Chrome, Firefox, Safari, and Edge in order.
-
     Args:
-        domain: Confluence domain
+        host: Confluence host name (e.g. confluence.example.com or x.atlassian.net)
+        browser: Browser name from BROWSERS, or "auto" to try all of them
 
     Returns:
-        Authenticated requests.Session
+        requests.Session carrying the browser's cookies for the host
 
     Raises:
         Exception: If cookies cannot be loaded from any browser
     """
-    session = requests.Session()
+    # Atlassian Cloud session cookies are set on the parent ".atlassian.net"
+    # domain, which browser_cookie3's substring filter would miss for the full host.
+    lookup_domain = "atlassian.net" if host.endswith(".atlassian.net") else host
+    names = list(BROWSERS) if browser == "auto" else [browser]
 
-    for browser_name, browser_func in [
-        ("Chrome", browser_cookie3.chrome),
-        ("Firefox", browser_cookie3.firefox),
-        ("Safari", browser_cookie3.safari),
-        ("Edge", browser_cookie3.edge),
-    ]:
+    for name in names:
         try:
-            cookies = browser_func(domain_name=domain)
-            session.cookies.update(cookies)
-            cookie_count = len([c for c in session.cookies if domain in c.domain])
-            print(f"✓ Loaded session from {browser_name} ({cookie_count} cookies for {domain})")
-            if cookie_count == 0:
-                print(f"  WARNING: No cookies found for domain {domain}")
-                continue
-            return session
-        except Exception:
+            jar = BROWSERS[name](domain_name=lookup_domain)
+        except Exception as e:
+            print(f"  {name}: could not read cookies ({e})")
             continue
+        session = requests.Session()
+        for cookie in jar:
+            if _cookie_matches(cookie.domain, host):
+                session.cookies.set_cookie(cookie)
+        if len(session.cookies) == 0:
+            print(f"  {name}: no cookies for {host}")
+            continue
+        print(f"✓ Loaded {len(session.cookies)} cookies for {host} from {name}")
+        return session
 
     raise Exception(
         "Could not load cookies from any browser. Make sure you're logged into Confluence."
     )
 
 
-def test_authentication(session: requests.Session, domain: str) -> bool:
+def get_token_session(email: str, token: str) -> requests.Session:
+    """Session using an API token (Cloud: email + API token; Server/DC: PAT)."""
+    session = requests.Session()
+    if email:
+        session.auth = (email, token)
+    else:
+        session.headers["Authorization"] = f"Bearer {token}"
+    return session
+
+
+def test_authentication(session: requests.Session, site: str) -> bool:
     """Test if session is authenticated.
 
     Args:
-        session: Requests session with cookies
-        domain: Confluence domain
+        session: Requests session with cookies or token auth
+        site: Confluence site
 
     Returns:
         True if authenticated, False otherwise
     """
-    test_url = f"https://{domain}/rest/api/space"
+    test_url = f"{confluence_api.build_base_url(site)}/rest/api/space?limit=1"
     try:
-        # Use make_request for retry logic
-        response = myModules.make_request(test_url, "", session, timeout=10)
+        response = confluence_api.make_request(test_url, "", session, timeout=10)
         if response.status_code == 200:
             # Also verify we get valid JSON, not an HTML login page
             try:
                 response.json()
                 return True
-            except:
-                print(f"WARNING: Got HTTP 200 but invalid JSON - likely redirected to login page")
+            except ValueError:
+                print(
+                    "WARNING: Got HTTP 200 but invalid JSON - likely redirected to login page"
+                )
                 print(f"Response content (first 200 chars): {response.text[:200]}")
                 return False
         else:
@@ -374,12 +411,16 @@ def test_authentication(session: requests.Session, domain: str) -> bool:
 def main():
     """Main entry point for the Confluence export tool."""
     parser = argparse.ArgumentParser(
-        description="Export Confluence pages with SSO authentication",
+        description="Export Confluence pages (Cloud or Server/DC) to HTML/RST",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Export single page with children
+  # Export single page with children (Server/DC, browser SSO cookies)
   %(prog)s --site confluence.example.com --page 123456 --html
+
+  # Atlassian Cloud with an API token, fixing internal links afterwards
+  CONFLUENCE_EMAIL=me@example.com CONFLUENCE_API_TOKEN=... \\
+  %(prog)s --site mysite.atlassian.net --page 123456 --html --fix-links
         """,
     )
 
@@ -388,7 +429,7 @@ Examples:
         "-S",
         type=str,
         required=True,
-        help="Confluence site (e.g., confluence.example.com)",
+        help="Confluence site or any URL on it (e.g. confluence.example.com, mysite.atlassian.net)",
     )
     parser.add_argument("--page", "-p", type=str, help="Page ID")
     parser.add_argument(
@@ -417,47 +458,63 @@ Examples:
         default=2,
         help="Number of concurrent workers (default: 2, reduce if you hit rate limits)",
     )
+    parser.add_argument(
+        "--browser",
+        choices=["auto", *BROWSERS],
+        default="auto",
+        help="Browser to read SSO cookies from (default: auto = try all)",
+    )
+    parser.add_argument(
+        "--fix-links",
+        action="store_true",
+        help="Rewrite internal Confluence links to relative file paths after export",
+    )
 
     args = parser.parse_args()
 
     # Validate required arguments
     if not args.page:
         parser.error("--page is required")
+    if args.fix_links and not args.html:
+        parser.error("--fix-links requires --html (page IDs are read from HTML files)")
 
-    # Get authenticated session
-    print(f"Confluence Export Tool - SSO Mode")
-    print(f"Site: {args.site}")
+    site = args.site
+    host = confluence_api.get_host(site)
+    print("Confluence Export Tool")
+    print(f"Site: {confluence_api.build_base_url(site)}")
     print("=" * 70)
     print()
 
-    domain = args.site.replace("https://", "").replace("http://", "")
+    # Token auth (env vars) takes precedence over browser cookies
+    api_token = os.environ.get("CONFLUENCE_API_TOKEN")
+    if api_token:
+        email = os.environ.get("CONFLUENCE_EMAIL", "")
+        print(f"Using API token auth{f' for {email}' if email else ' (Bearer PAT)'}")
+        session = get_token_session(email, api_token)
+    else:
+        try:
+            session = get_browser_session(host, args.browser)
+        except Exception as e:
+            print(f"ERROR: {e}")
+            print(
+                "\nLog into Confluence in your browser, or set CONFLUENCE_EMAIL and "
+                "CONFLUENCE_API_TOKEN."
+            )
+            sys.exit(1)
 
-    try:
-        session = get_browser_session(domain)
-    except Exception as e:
-        print(f"ERROR: {e}")
-        print(
-            "\nMake sure you're logged into Confluence in your browser (Chrome, Firefox, Safari, or Edge)"
-        )
-        sys.exit(1)
-
-    # Test authentication
-    if not test_authentication(session, domain):
-        print(
-            "ERROR: Authentication failed. Please login to Confluence in your browser and try again."
-        )
+    if not test_authentication(session, site):
+        print("ERROR: Authentication failed.")
         sys.exit(1)
 
     print("✓ Authentication successful")
     print()
 
-    # Create exporter
-    exporter = ConfluenceExporter(domain, session)
-
-    # Export single page and children
+    exporter = ConfluenceExporter(site, session)
     pages = exporter.get_page_tree(args.page, max_workers=args.workers)
+    if not pages:
+        print(f"ERROR: Could not fetch page {args.page}")
+        sys.exit(1)
 
-    # Build folder structure
     page_paths = exporter.build_folder_structure(pages)
 
     # Create base directory
@@ -483,6 +540,15 @@ Examples:
         args.rst,
         max_workers=args.workers,
     )
+
+    if args.fix_links:
+        from fix_confluence_links import ConfluenceLinkFixer
+
+        print("\nFixing internal links...")
+        fixer = ConfluenceLinkFixer(base_dir)
+        fixer.scan_files()
+        fixer.process_all_files()
+        fixer.print_summary()
 
     print("\n✓ Export complete!")
 

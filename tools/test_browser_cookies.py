@@ -37,11 +37,11 @@ for browser_name, browser_func in browsers:
             cookie_names = [c.name for c in cookie_list[:5]]
             print(f"  Sample cookies: {', '.join(cookie_names)}")
         else:
-            print(f"⚠ No cookies found (not logged in?)")
+            print("⚠ No cookies found (not logged in?)")
     except Exception as e:
         print(f"✗ Failed: {type(e).__name__}")
         if "pycryptodomex" in str(e).lower():
-            print(f"  Note: Edge/Chrome might need: pip install pycryptodomex")
+            print("  Note: Edge/Chrome might need: pip install pycryptodomex")
 
 print()
 print("=" * 60)
@@ -49,7 +49,9 @@ if success_count > 0:
     print(f"✓ SUCCESS: Found cookies in {success_count} browser(s)")
     print()
     print("You can now run:")
-    print(f"  python confluenceDumpWithSSO.py --mode space --site {domain} --space YOUR_SPACE_KEY")
+    print(
+        f"  python confluenceDumpWithSSO.py --mode space --site {domain} --space YOUR_SPACE_KEY"
+    )
 else:
     print("✗ FAILED: Could not extract cookies from any browser")
     print()
